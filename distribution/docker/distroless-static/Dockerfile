@@ -1,4 +1,5 @@
-FROM docker.io/alpine:3.14 AS builder
+#FROM docker.io/alpine:3.14 AS builder
+FROM cr.loongnix.cn/library/alpine:3.11 AS builder
 
 WORKDIR /vector
 
@@ -7,7 +8,8 @@ RUN tar -xvf vector-0*-"$(cat /etc/apk/arch)"-unknown-linux-musl*.tar.gz --strip
 
 RUN mkdir -p /var/lib/vector
 
-FROM gcr.io/distroless/static
+#FROM gcr.io/distroless/static
+FROM cr.loongnix.cn/distroless/static
 
 COPY --from=builder /vector/bin/* /usr/local/bin/
 COPY --from=builder /vector/config/vector.toml /etc/vector/vector.toml

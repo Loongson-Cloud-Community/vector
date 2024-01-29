@@ -1,4 +1,5 @@
-FROM docker.io/debian:bullseye-slim AS builder
+#FROM docker.io/debian:bullseye-slim AS builder
+FROM cr.loongnix.cn/library/debian:buster-slim AS builder
 
 WORKDIR /vector
 
@@ -7,7 +8,8 @@ RUN dpkg -i vector_*_"$(dpkg --print-architecture)".deb
 
 RUN mkdir -p /var/lib/vector
 
-FROM docker.io/debian:bullseye-slim
+#FROM docker.io/debian:bullseye-slim
+FROM cr.loongnix.cn/library/debian:buster-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata systemd && rm -rf /var/lib/apt/lists/*
 

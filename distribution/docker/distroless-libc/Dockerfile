@@ -1,4 +1,5 @@
-FROM docker.io/debian:bullseye-slim AS builder
+#FROM docker.io/debian:bullseye-slim AS builder
+FROM cr.loongnix.cn/library/debian-slim AS builder
 
 WORKDIR /vector
 
@@ -7,7 +8,7 @@ RUN dpkg -i vector_*_"$(dpkg --print-architecture)".deb
 
 RUN mkdir -p /var/lib/vector
 
-FROM gcr.io/distroless/cc-debian10
+#FROM gcr.io/distroless/cc-debian10
 
 COPY --from=builder /usr/bin/vector /usr/bin/vector
 COPY --from=builder /usr/share/doc/vector /usr/share/doc/vector

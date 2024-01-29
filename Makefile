@@ -171,12 +171,14 @@ environment-push: environment-prepare ## Publish a new version of the container 
 build: check-build-tools
 build: export CFLAGS += -g0 -O3
 build: ## Build the project in release mode (Supports `ENVIRONMENT=true`)
-	${MAYBE_ENVIRONMENT_EXEC} cargo build --release --no-default-features --features ${FEATURES}
-	${MAYBE_ENVIRONMENT_COPY_ARTIFACTS}
+#	${MAYBE_ENVIRONMENT_EXEC} cargo build --release --no-default-features --features ${FEATURES}
+#	${MAYBE_ENVIRONMENT_COPY_ARTIFACTS}
+	${MAYBE_ENVIRONMENT_EXEC} cargo build --release --no-default-features
 
 .PHONY: build-dev
 build-dev: ## Build the project in development mode (Supports `ENVIRONMENT=true`)
-	${MAYBE_ENVIRONMENT_EXEC} cargo build --no-default-features --features ${FEATURES}
+#	${MAYBE_ENVIRONMENT_EXEC} cargo build --no-default-features --features ${FEATURES}
+	${MAYBE_ENVIRONMENT_EXEC} cargo build --no-default-features --features
 
 .PHONY: build-x86_64-unknown-linux-gnu
 build-x86_64-unknown-linux-gnu: target/x86_64-unknown-linux-gnu/release/vector ## Build a release binary for the x86_64-unknown-linux-gnu triple.
@@ -184,6 +186,10 @@ build-x86_64-unknown-linux-gnu: target/x86_64-unknown-linux-gnu/release/vector #
 
 .PHONY: build-aarch64-unknown-linux-gnu
 build-aarch64-unknown-linux-gnu: target/aarch64-unknown-linux-gnu/release/vector ## Build a release binary for the aarch64-unknown-linux-gnu triple.
+	@echo "Output to ${<}"
+
+.PHONY: build-loong64-unknown-linux-gnu
+build-loong64-unknown-linux-gnu: target/loong64-unknown-linux-gnu/release/vector ## Build a release binary for the loong64-unknown-linux-gnu triple.
 	@echo "Output to ${<}"
 
 .PHONY: build-x86_64-unknown-linux-musl
@@ -200,6 +206,10 @@ build-armv7-unknown-linux-gnueabihf: target/armv7-unknown-linux-gnueabihf/releas
 
 .PHONY: build-armv7-unknown-linux-musleabihf
 build-armv7-unknown-linux-musleabihf: target/armv7-unknown-linux-musleabihf/release/vector ## Build a release binary for the armv7-unknown-linux-musleabihf triple.
+	@echo "Output to ${<}"
+
+.PHONY: build-loong64-unknown-linux-musl
+build-loong64-unknown-linux-musl: target/loong64-unknown-linux-musl/release/vector ## Build a release binary for the loong64-unknown-linux-musl triple.
 	@echo "Output to ${<}"
 
 .PHONY: build-graphql-schema
@@ -313,6 +323,10 @@ test-x86_64-unknown-linux-gnu: cross-test-x86_64-unknown-linux-gnu ## Runs unit 
 
 .PHONY: test-aarch64-unknown-linux-gnu
 test-aarch64-unknown-linux-gnu: cross-test-aarch64-unknown-linux-gnu ## Runs unit tests on the aarch64-unknown-linux-gnu triple
+	${EMPTY}
+
+.PHONY: test-loong64-unknown-linux-gnu
+test-loong64-unknown-linux-gnu: cross-test-loong64-unknown-linux-gnu ## Runs unit tests on the loong64-unknown-linux-gnu triple
 	${EMPTY}
 
 .PHONY: test-behavior-config
@@ -533,6 +547,12 @@ package-aarch64-unknown-linux-gnu-all: package-aarch64-unknown-linux-gnu package
 .PHONY: package-armv7-unknown-linux-gnueabihf-all
 package-armv7-unknown-linux-gnueabihf-all: package-armv7-unknown-linux-gnueabihf package-deb-armv7-gnu package-rpm-armv7-gnu  # Build all armv7-unknown-linux-gnueabihf MUSL packages
 
+.PHONY: package-loong64-unknown-linux-musl-all
+package-loong64-unknown-linux-musl-all: package-loong64-unknown-linux-musl # Build all loong64 MUSL packages
+
+.PHONY: package-loong64-unknown-linux-gnu-all
+package-loong64-unknown-linux-gnu-all: package-loong64-unknown-linux-gnu package-deb-loong64 package-rpm-loong64 # Build all loong64 GNU packages
+
 .PHONY: package-x86_64-unknown-linux-gnu
 package-x86_64-unknown-linux-gnu: target/artifacts/vector-${VERSION}-x86_64-unknown-linux-gnu.tar.gz ## Build an archive suitable for the `x86_64-unknown-linux-gnu` triple.
 	@echo "Output to ${<}."
@@ -557,6 +577,14 @@ package-armv7-unknown-linux-gnueabihf: target/artifacts/vector-${VERSION}-armv7-
 package-armv7-unknown-linux-musleabihf: target/artifacts/vector-${VERSION}-armv7-unknown-linux-musleabihf.tar.gz ## Build an archive suitable for the `armv7-unknown-linux-musleabihf triple.
 	@echo "Output to ${<}."
 
+.PHONY: package-loong64-unknown-linux-musl
+package-loong64-unknown-linux-musl: target/artifacts/vector-${VERSION}-loong64-unknown-linux-musl.tar.gz ## Build an archive suitable for the `loong64-unknown-linux-musl` triple.
+	@echo "Output to ${<}."
+
+.PHONY: package-loong64-unknown-linux-gnu
+package-loong64-unknown-linux-gnu: target/artifacts/vector-${VERSION}-loong64-unknown-linux-gnu.tar.gz ## Build an archive suitable for the `loong64-unknown-linux-gnu` triple.
+	@echo "Output to ${<}."
+
 # debs
 
 .PHONY: package-deb-x86_64-unknown-linux-gnu
@@ -575,6 +603,11 @@ package-deb-aarch64: package-aarch64-unknown-linux-gnu ## Build the aarch64 deb 
 package-deb-armv7-gnu: package-armv7-unknown-linux-gnueabihf ## Build the armv7-unknown-linux-gnueabihf deb package
 	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=armv7-unknown-linux-gnueabihf $(ENVIRONMENT_UPSTREAM) ./scripts/package-deb.sh
 
+.PHONY: package-deb-loong64
+package-deb-loong64: package-loong64-unknown-linux-gnu ## Build the loong64 deb package
+	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=loong64-unknown-linux-gnu $(ENVIRONMENT_UPSTREAM) ./scripts/package-deb.sh
+
+
 # rpms
 
 .PHONY: package-rpm-x86_64-unknown-linux-gnu
@@ -592,6 +625,10 @@ package-rpm-aarch64: package-aarch64-unknown-linux-gnu ## Build the aarch64 rpm 
 .PHONY: package-rpm-armv7-gnu
 package-rpm-armv7-gnu: package-armv7-unknown-linux-gnueabihf ## Build the armv7-unknown-linux-gnueabihf rpm package
 	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=armv7-unknown-linux-gnueabihf $(ENVIRONMENT_UPSTREAM) ./scripts/package-rpm.sh
+
+.PHONY: package-rpm-loong64
+package-rpm-loong64: package-loong64-unknown-linux-gnu ## Build the loong64 rpm package
+	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=loong64-unknown-linux-gnu $(ENVIRONMENT_UPSTREAM) ./scripts/package-rpm.sh
 
 ##@ Releasing
 

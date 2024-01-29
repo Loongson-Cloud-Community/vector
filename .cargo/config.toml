@@ -24,3 +24,49 @@ rustflags = ["-C", "link-args=-rdynamic"]
 
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "link-args=-rdynamic"]
+
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."https://github.com/Azure/azure-sdk-for-rust.git"]
+git = "https://github.com/Azure/azure-sdk-for-rust.git"
+rev = "b4544d4920fa3064eb921340054cd9cc130b7664"
+replace-with = "vendored-sources"
+
+[source."https://github.com/hyperium/h2.git"]
+git = "https://github.com/hyperium/h2.git"
+rev = "f6aa3be6719270cd7b4094ee1940751b5f4ec88e"
+replace-with = "vendored-sources"
+
+[source."https://github.com/tokio-rs/tracing"]
+git = "https://github.com/tokio-rs/tracing"
+rev = "e0642d949891546a3bb7e47080365ee7274f05cd"
+replace-with = "vendored-sources"
+
+[source."https://github.com/vectordotdev/chrono.git"]
+git = "https://github.com/vectordotdev/chrono.git"
+branch = "no-default-time-v0.4.22-1"
+replace-with = "vendored-sources"
+
+[source."https://github.com/vectordotdev/heim.git"]
+git = "https://github.com/vectordotdev/heim.git"
+branch = "update-nix"
+replace-with = "vendored-sources"
+
+[source."https://github.com/vectordotdev/leveldb-sys.git"]
+git = "https://github.com/vectordotdev/leveldb-sys.git"
+branch = "leveldb_mmap_limit"
+replace-with = "vendored-sources"
+
+[source."https://github.com/vectordotdev/openssl-src-rs.git"]
+git = "https://github.com/vectordotdev/openssl-src-rs.git"
+branch = "enable_engine"
+replace-with = "vendored-sources"
+
+[source."https://github.com/vectordotdev/tokio"]
+git = "https://github.com/vectordotdev/tokio"
+rev = "3aa231cf6f33f74ca29077163879f0de9a207ad8"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
