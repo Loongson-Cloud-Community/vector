@@ -96,7 +96,7 @@ async fn skip_unknown_fields() {
     let config = ClickhouseConfig {
         endpoint: host.parse().unwrap(),
         table: table.clone().try_into().unwrap(),
-        skip_unknown_fields: true,
+        skip_unknown_fields: Some(true),
         compression: Compression::None,
         batch,
         request: TowerRequestConfig {
@@ -324,7 +324,7 @@ async fn no_retry_on_incorrect_data_warp() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(receiver.try_recv(), Ok(BatchStatus::Rejected));
+    assert_eq!(receiver.try_recv(), Ok(BatchStatus::Errored));
 }
 
 #[tokio::test]

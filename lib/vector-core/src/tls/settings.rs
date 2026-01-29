@@ -85,14 +85,14 @@ pub struct TlsSourceConfig {
 #[derive(Clone, Debug, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TlsConfig {
-    /// Enables certificate verification.
+    /// Enables certificate verification. For components that create a server, this requires that the
+    /// client connections have a valid client certificate. For components that initiate requests,
+    /// this validates that the upstream has a valid certificate.
     ///
     /// If enabled, certificates must not be expired and must be issued by a trusted
     /// issuer. This verification operates in a hierarchical manner, checking that the leaf certificate (the
     /// certificate presented by the client/server) is not only valid, but that the issuer of that certificate is also valid, and
     /// so on until the verification process reaches a root certificate.
-    ///
-    /// Relevant for both incoming and outgoing connections.
     ///
     /// Do NOT set this to `false` unless you understand the risks of not verifying the validity of certificates.
     pub verify_certificate: Option<bool>,
@@ -148,6 +148,14 @@ pub struct TlsConfig {
     #[configurable(metadata(docs::examples = "PassWord1"))]
     #[configurable(metadata(docs::human_name = "Key File Password"))]
     pub key_pass: Option<String>,
+
+    /// Server name to use when using Server Name Indication (SNI).
+    ///
+    /// Only relevant for outgoing connections.
+    #[serde(alias = "server_name")]
+    #[configurable(metadata(docs::examples = "www.example.com"))]
+    #[configurable(metadata(docs::human_name = "Server Name"))]
+    pub server_name: Option<String>,
 }
 
 impl TlsConfig {
@@ -169,6 +177,7 @@ pub struct TlsSettings {
     authorities: Vec<X509>,
     pub(super) identity: Option<IdentityStore>, // openssl::pkcs12::ParsedPkcs12 doesn't impl Clone yet
     alpn_protocols: Option<Vec<u8>>,
+    server_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -178,13 +187,13 @@ impl TlsSettings {
     /// Generate a filled out settings struct from the given optional
     /// option set, interpreted as client options. If `options` is
     /// `None`, the result is set to defaults (ie empty).
-    pub fn from_options(options: &Option<TlsConfig>) -> Result<Self> {
+    pub fn from_options(options: Option<&TlsConfig>) -> Result<Self> {
         Self::from_options_base(options, false)
     }
 
-    pub(super) fn from_options_base(options: &Option<TlsConfig>, for_server: bool) -> Result<Self> {
+    pub(super) fn from_options_base(options: Option<&TlsConfig>, for_server: bool) -> Result<Self> {
         let default = TlsConfig::default();
-        let options = options.as_ref().unwrap_or(&default);
+        let options = options.unwrap_or(&default);
 
         if !for_server {
             if options.verify_certificate == Some(false) {
@@ -203,6 +212,7 @@ impl TlsSettings {
             authorities: options.load_authorities()?,
             identity: options.load_identity()?,
             alpn_protocols: options.parse_alpn_protocols()?,
+            server_name: options.server_name.clone(),
         })
     }
 
@@ -333,8 +343,17 @@ impl TlsSettings {
         Ok(())
     }
 
-    pub fn apply_connect_configuration(&self, connection: &mut ConnectConfiguration) {
+    pub fn apply_connect_configuration(
+        &self,
+        connection: &mut ConnectConfiguration,
+    ) -> std::result::Result<(), openssl::error::ErrorStack> {
         connection.set_verify_hostname(self.verify_hostname);
+        if let Some(server_name) = &self.server_name {
+            // Prevent native TLS lib from inferring default SNI using domain name from url.
+            connection.set_use_server_name_indication(false);
+            connection.set_hostname(server_name)?;
+        }
+        Ok(())
     }
 }
 
@@ -401,7 +420,7 @@ impl TlsConfig {
                     .into_iter();
 
                 let crt = crt_stack.next().ok_or(TlsError::MissingCertificate)?;
-                let key = load_key(key_file, &self.key_pass)?;
+                let key = load_key(key_file.as_path(), self.key_pass.as_ref())?;
 
                 let mut ca_stack = Stack::new().context(NewCaStackSnafu)?;
                 for intermediate in crt_stack {
@@ -536,11 +555,11 @@ pub type MaybeTlsSettings = MaybeTls<(), TlsSettings>;
 
 impl MaybeTlsSettings {
     pub fn enable_client() -> Result<Self> {
-        let tls = TlsSettings::from_options_base(&None, false)?;
+        let tls = TlsSettings::from_options_base(None, false)?;
         Ok(Self::Tls(tls))
     }
 
-    pub fn tls_client(config: &Option<TlsConfig>) -> Result<Self> {
+    pub fn tls_client(config: Option<&TlsConfig>) -> Result<Self> {
         Ok(Self::Tls(TlsSettings::from_options_base(config, false)?))
     }
 
@@ -550,13 +569,12 @@ impl MaybeTlsSettings {
     /// should be interpreted as being for a TLS server, which requires
     /// an identity certificate and changes the certificate verification
     /// default to false.
-    pub fn from_config(config: &Option<TlsEnableableConfig>, for_server: bool) -> Result<Self> {
+    pub fn from_config(config: Option<&TlsEnableableConfig>, for_server: bool) -> Result<Self> {
         match config {
             None => Ok(Self::Raw(())), // No config, no TLS settings
             Some(config) => {
                 if config.enabled.unwrap_or(false) {
-                    let tls =
-                        TlsSettings::from_options_base(&Some(config.options.clone()), for_server)?;
+                    let tls = TlsSettings::from_options_base(Some(&config.options), for_server)?;
                     match (for_server, &tls.identity) {
                         // Servers require an identity certificate
                         (true, None) => Err(TlsError::MissingRequiredIdentity),
@@ -584,7 +602,7 @@ impl From<TlsSettings> for MaybeTlsSettings {
 }
 
 /// Load a private key from a named file
-fn load_key(filename: &Path, pass_phrase: &Option<String>) -> Result<PKey<Private>> {
+fn load_key(filename: &Path, pass_phrase: Option<&String>) -> Result<PKey<Private>> {
     let (data, filename) = open_read(filename, "key")?;
     match pass_phrase {
         None => der_or_pem(
@@ -654,7 +672,7 @@ mod test {
             ..Default::default()
         };
         let settings =
-            TlsSettings::from_options(&Some(options)).expect("Failed to parse alpn_protocols");
+            TlsSettings::from_options(Some(&options)).expect("Failed to parse alpn_protocols");
         assert_eq!(settings.alpn_protocols, Some(vec![2, 104, 50]));
     }
 
@@ -667,7 +685,7 @@ mod test {
             ..Default::default()
         };
         let settings =
-            TlsSettings::from_options(&Some(options)).expect("Failed to load PKCS#12 certificate");
+            TlsSettings::from_options(Some(&options)).expect("Failed to load PKCS#12 certificate");
         assert!(settings.identity.is_some());
         assert_eq!(settings.authorities.len(), 0);
     }
@@ -680,7 +698,7 @@ mod test {
             ..Default::default()
         };
         let settings =
-            TlsSettings::from_options(&Some(options)).expect("Failed to load PEM certificate");
+            TlsSettings::from_options(Some(&options)).expect("Failed to load PEM certificate");
         assert!(settings.identity.is_some());
         assert_eq!(settings.authorities.len(), 0);
     }
@@ -695,7 +713,7 @@ mod test {
             ..Default::default()
         };
         let settings =
-            TlsSettings::from_options(&Some(options)).expect("Failed to load PEM certificate");
+            TlsSettings::from_options(Some(&options)).expect("Failed to load PEM certificate");
         assert!(settings.identity.is_some());
         assert_eq!(settings.authorities.len(), 0);
     }
@@ -706,7 +724,7 @@ mod test {
             ca_file: Some(TEST_PEM_CA_PATH.into()),
             ..Default::default()
         };
-        let settings = TlsSettings::from_options(&Some(options))
+        let settings = TlsSettings::from_options(Some(&options))
             .expect("Failed to load authority certificate");
         assert!(settings.identity.is_none());
         assert_eq!(settings.authorities.len(), 1);
@@ -722,7 +740,7 @@ mod test {
             ca_file: Some(ca.into()),
             ..Default::default()
         };
-        let settings = TlsSettings::from_options(&Some(options))
+        let settings = TlsSettings::from_options(Some(&options))
             .expect("Failed to load authority certificate");
         assert!(settings.identity.is_none());
         assert_eq!(settings.authorities.len(), 1);
@@ -734,7 +752,7 @@ mod test {
             ca_file: Some("tests/data/ca/intermediate_server/certs/ca-chain.cert.pem".into()),
             ..Default::default()
         };
-        let settings = TlsSettings::from_options(&Some(options))
+        let settings = TlsSettings::from_options(Some(&options))
             .expect("Failed to load authority certificate");
         assert!(settings.identity.is_none());
         assert_eq!(settings.authorities.len(), 2);
@@ -746,7 +764,7 @@ mod test {
             ca_file: Some("tests/data/Multi_CA.crt".into()),
             ..Default::default()
         };
-        let settings = TlsSettings::from_options(&Some(options))
+        let settings = TlsSettings::from_options(Some(&options))
             .expect("Failed to load authority certificate");
         assert!(settings.identity.is_none());
         assert_eq!(settings.authorities.len(), 2);
@@ -754,7 +772,7 @@ mod test {
 
     #[test]
     fn from_options_none() {
-        let settings = TlsSettings::from_options(&None).expect("Failed to generate null settings");
+        let settings = TlsSettings::from_options(None).expect("Failed to generate null settings");
         assert!(settings.identity.is_none());
         assert_eq!(settings.authorities.len(), 0);
     }
@@ -765,7 +783,7 @@ mod test {
             key_file: Some(TEST_PEM_KEY_PATH.into()),
             ..Default::default()
         };
-        let error = TlsSettings::from_options(&Some(options))
+        let error = TlsSettings::from_options(Some(&options))
             .expect_err("from_options failed to check certificate");
         assert!(matches!(error, TlsError::MissingCrtKeyFile));
 
@@ -773,17 +791,15 @@ mod test {
             crt_file: Some(TEST_PEM_CRT_PATH.into()),
             ..Default::default()
         };
-        let _error = TlsSettings::from_options(&Some(options))
+        let _error = TlsSettings::from_options(Some(&options))
             .expect_err("from_options failed to check certificate");
         // Actual error is an ASN parse, doesn't really matter
     }
 
     #[test]
     fn from_config_none() {
-        assert!(MaybeTlsSettings::from_config(&None, true).unwrap().is_raw());
-        assert!(MaybeTlsSettings::from_config(&None, false)
-            .unwrap()
-            .is_raw());
+        assert!(MaybeTlsSettings::from_config(None, true).unwrap().is_raw());
+        assert!(MaybeTlsSettings::from_config(None, false).unwrap().is_raw());
     }
 
     #[test]
@@ -797,7 +813,7 @@ mod test {
     #[test]
     fn from_config_fails_without_certificate() {
         let config = make_config(Some(true), false, false);
-        let error = MaybeTlsSettings::from_config(&Some(config), true)
+        let error = MaybeTlsSettings::from_config(Some(&config), true)
             .expect_err("from_config failed to check for a certificate");
         assert!(matches!(error, TlsError::MissingRequiredIdentity));
     }
@@ -815,7 +831,7 @@ mod test {
         for_server: bool,
     ) -> MaybeTlsSettings {
         let config = make_config(enabled, set_crt, set_key);
-        MaybeTlsSettings::from_config(&Some(config), for_server)
+        MaybeTlsSettings::from_config(Some(&config), for_server)
             .expect("Failed to generate settings from config")
     }
 

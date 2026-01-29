@@ -98,6 +98,8 @@ base: components: sources: file: configuration: {
 			ignored_header_bytes: {
 				description: """
 					The number of bytes to skip ahead (or ignore) when reading the data used for generating the checksum.
+					If the file is compressed, the number of bytes refer to the header in the uncompressed content. Only
+					gzip is supported at this time.
 
 					This can be helpful if all files share a common header that should be skipped.
 					"""
@@ -112,7 +114,8 @@ base: components: sources: file: configuration: {
 				description: """
 					The number of lines to read for generating the checksum.
 
-					If your files share a common header that is not always a fixed size,
+					The number of lines are determined from the uncompressed content if the file is compressed. Only
+					gzip is supported at this time.
 
 					If the file has less than this amount of lines, it won’t be read at all.
 					"""
@@ -169,10 +172,7 @@ base: components: sources: file: configuration: {
 			[global_host_key]: https://vector.dev/docs/reference/configuration/global-options/#log_schema.host_key
 			"""
 		required: false
-		type: string: {
-			default: "host"
-			examples: ["hostname"]
-		}
+		type: string: examples: ["hostname"]
 	}
 	ignore_checkpoints: {
 		description: """
@@ -366,6 +366,17 @@ base: components: sources: file: configuration: {
 		type: uint: {
 			examples: [0, 5, 60]
 			unit: "seconds"
+		}
+	}
+	rotate_wait_secs: {
+		description: """
+			How long to keep an open handle to a rotated log file.
+			The default value represents "no limit"
+			"""
+		required: false
+		type: uint: {
+			default: 9223372036854775807
+			unit:    "seconds"
 		}
 	}
 }

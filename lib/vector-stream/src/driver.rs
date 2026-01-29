@@ -174,7 +174,7 @@ where
                                 request_id,
                                 finalizers,
                                 event_count,
-                                &bytes_sent,
+                                bytes_sent.as_ref(),
                                 &events_sent,
                             ))
                             .instrument(info_span!("request", request_id).or_current());
@@ -200,7 +200,7 @@ where
         request_id: usize,
         finalizers: EventFinalizers,
         event_count: usize,
-        bytes_sent: &Option<Registered<BytesSent>>,
+        bytes_sent: Option<&Registered<BytesSent>>,
         events_sent: &RegisteredEventCache<(), TaggedEventsSent>,
     ) {
         match result {
@@ -272,7 +272,7 @@ mod tests {
     type Counter = Arc<AtomicUsize>;
 
     #[derive(Debug)]
-    struct DelayRequest(usize, EventFinalizers, RequestMetadata);
+    struct DelayRequest(EventFinalizers, RequestMetadata);
 
     impl DelayRequest {
         fn new(value: usize, counter: &Counter) -> Self {
@@ -283,7 +283,6 @@ mod tests {
                 counter.fetch_add(value, Ordering::Relaxed);
             });
             Self(
-                value,
                 EventFinalizers::new(EventFinalizer::new(batch)),
                 RequestMetadata::default(),
             )
@@ -292,17 +291,17 @@ mod tests {
 
     impl Finalizable for DelayRequest {
         fn take_finalizers(&mut self) -> vector_core::event::EventFinalizers {
-            std::mem::take(&mut self.1)
+            std::mem::take(&mut self.0)
         }
     }
 
     impl MetaDescriptive for DelayRequest {
         fn get_metadata(&self) -> &RequestMetadata {
-            &self.2
+            &self.1
         }
 
         fn metadata_mut(&mut self) -> &mut RequestMetadata {
-            &mut self.2
+            &mut self.1
         }
     }
 

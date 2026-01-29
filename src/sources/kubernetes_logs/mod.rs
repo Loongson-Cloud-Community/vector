@@ -10,6 +10,7 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures::{future::FutureExt, stream::StreamExt};
 use futures_util::Stream;
+use http_1::{HeaderName, HeaderValue};
 use k8s_openapi::api::core::v1::{Namespace, Node, Pod};
 use k8s_paths_provider::K8sPathsProvider;
 use kube::{
@@ -34,7 +35,10 @@ use vector_lib::{
 };
 use vrl::value::{kind::Collection, Kind};
 
-use crate::sources::kubernetes_logs::partial_events_merger::merge_partial_events;
+use crate::{
+    built_info::{PKG_NAME, PKG_VERSION},
+    sources::kubernetes_logs::partial_events_merger::merge_partial_events,
+};
 use crate::{
     config::{
         log_schema, ComponentKey, DataType, GenerateConfig, GlobalOptions, SourceConfig,
@@ -152,6 +156,10 @@ pub struct Config {
     #[configurable(derived)]
     node_annotation_fields: node_metadata_annotator::FieldsSpec,
 
+    /// A list of glob patterns to include while reading the files.
+    #[configurable(metadata(docs::examples = "**/include/**"))]
+    include_paths_glob_patterns: Vec<PathBuf>,
+
     /// A list of glob patterns to exclude from reading the files.
     #[configurable(metadata(docs::examples = "**/exclude/**"))]
     exclude_paths_glob_patterns: Vec<PathBuf>,
@@ -243,6 +251,13 @@ pub struct Config {
     #[configurable(derived)]
     #[serde(default)]
     internal_metrics: FileInternalMetricsConfig,
+
+    /// How long to keep an open handle to a rotated log file.
+    /// The default value represents "no limit"
+    #[serde_as(as = "serde_with::DurationSeconds<u64>")]
+    #[configurable(metadata(docs::type_unit = "seconds"))]
+    #[serde(default = "default_rotate_wait", rename = "rotate_wait_secs")]
+    rotate_wait: Duration,
 }
 
 const fn default_read_from() -> ReadFromConfig {
@@ -272,6 +287,7 @@ impl Default for Config {
             pod_annotation_fields: pod_metadata_annotator::FieldsSpec::default(),
             namespace_annotation_fields: namespace_metadata_annotator::FieldsSpec::default(),
             node_annotation_fields: node_metadata_annotator::FieldsSpec::default(),
+            include_paths_glob_patterns: default_path_inclusion(),
             exclude_paths_glob_patterns: default_path_exclusion(),
             read_from: default_read_from(),
             ignore_older_secs: None,
@@ -287,6 +303,7 @@ impl Default for Config {
             delay_deletion_ms: default_delay_deletion_ms(),
             log_namespace: None,
             internal_metrics: Default::default(),
+            rotate_wait: default_rotate_wait(),
         }
     }
 }
@@ -505,7 +522,10 @@ impl SourceConfig for Config {
             )
             .with_standard_vector_source_metadata();
 
-        vec![SourceOutput::new_logs(DataType::Log, schema_definition)]
+        vec![SourceOutput::new_maybe_logs(
+            DataType::Log,
+            schema_definition,
+        )]
     }
 
     fn can_acknowledge(&self) -> bool {
@@ -526,6 +546,7 @@ struct Source {
     namespace_label_selector: String,
     node_selector: String,
     self_node_name: String,
+    include_paths: Vec<glob::Pattern>,
     exclude_paths: Vec<glob::Pattern>,
     read_from: ReadFrom,
     ignore_older_secs: Option<u64>,
@@ -538,6 +559,7 @@ struct Source {
     ingestion_timestamp_field: Option<OwnedTargetPath>,
     delay_deletion: Duration,
     include_file_metric_tag: bool,
+    rotate_wait: Duration,
 }
 
 impl Source {
@@ -568,7 +590,7 @@ impl Source {
         // If the user passed a custom Kubeconfig use it, otherwise
         // we attempt to load the local kubeconfig, followed by the
         // in-cluster environment variables
-        let client_config = match &config.kube_config_file {
+        let mut client_config = match &config.kube_config_file {
             Some(kc) => {
                 ClientConfig::from_custom_kubeconfig(
                     config::Kubeconfig::read_from(kc)?,
@@ -578,9 +600,16 @@ impl Source {
             }
             None => ClientConfig::infer().await?,
         };
+        if let Ok(user_agent) = HeaderValue::from_str(&format!("{}/{}", PKG_NAME, PKG_VERSION)) {
+            client_config
+                .headers
+                .push((HeaderName::from_static("user-agent"), user_agent));
+        }
         let client = Client::try_from(client_config)?;
 
         let data_dir = globals.resolve_and_make_data_subdir(config.data_dir.as_ref(), key.id())?;
+
+        let include_paths = prepare_include_paths(config)?;
 
         let exclude_paths = prepare_exclude_paths(config)?;
 
@@ -605,6 +634,7 @@ impl Source {
             namespace_label_selector,
             node_selector,
             self_node_name,
+            include_paths,
             exclude_paths,
             read_from: ReadFrom::from(config.read_from),
             ignore_older_secs: config.ignore_older_secs,
@@ -617,6 +647,7 @@ impl Source {
             ingestion_timestamp_field,
             delay_deletion,
             include_file_metric_tag: config.internal_metrics.include_file_tag,
+            rotate_wait: config.rotate_wait,
         })
     }
 
@@ -638,6 +669,7 @@ impl Source {
             namespace_label_selector,
             node_selector,
             self_node_name,
+            include_paths,
             exclude_paths,
             read_from,
             ignore_older_secs,
@@ -650,6 +682,7 @@ impl Source {
             ingestion_timestamp_field,
             delay_deletion,
             include_file_metric_tag,
+            rotate_wait,
         } = self;
 
         let mut reflectors = Vec::new();
@@ -671,7 +704,7 @@ impl Source {
                 ..Default::default()
             },
         )
-        .backoff(watcher::default_backoff());
+        .backoff(watcher::DefaultBackoff::default());
         let pod_store_w = reflector::store::Writer::default();
         let pod_state = pod_store_w.as_reader();
         let pod_cacher = MetaCache::new();
@@ -694,7 +727,7 @@ impl Source {
                 ..Default::default()
             },
         )
-        .backoff(watcher::default_backoff());
+        .backoff(watcher::DefaultBackoff::default());
         let ns_store_w = reflector::store::Writer::default();
         let ns_state = ns_store_w.as_reader();
         let ns_cacher = MetaCache::new();
@@ -717,7 +750,7 @@ impl Source {
                 ..Default::default()
             },
         )
-        .backoff(watcher::default_backoff());
+        .backoff(watcher::DefaultBackoff::default());
         let node_store_w = reflector::store::Writer::default();
         let node_state = node_store_w.as_reader();
         let node_cacher = MetaCache::new();
@@ -729,8 +762,12 @@ impl Source {
             delay_deletion,
         )));
 
-        let paths_provider =
-            K8sPathsProvider::new(pod_state.clone(), ns_state.clone(), exclude_paths);
+        let paths_provider = K8sPathsProvider::new(
+            pod_state.clone(),
+            ns_state.clone(),
+            include_paths,
+            exclude_paths,
+        );
         let annotator = PodMetadataAnnotator::new(pod_state, pod_fields_spec, log_namespace);
         let ns_annotator =
             NamespaceMetadataAnnotator::new(ns_state, namespace_fields_spec, log_namespace);
@@ -792,6 +829,7 @@ impl Source {
             },
             // A handle to the current tokio runtime
             handle: tokio::runtime::Handle::current(),
+            rotate_wait,
         };
 
         let (file_source_tx, file_source_rx) = futures::channel::mpsc::channel::<Vec<Line>>(2);
@@ -956,6 +994,10 @@ fn default_self_node_name_env_template() -> String {
     format!("${{{}}}", SELF_NODE_NAME_ENV_KEY.to_owned())
 }
 
+fn default_path_inclusion() -> Vec<PathBuf> {
+    vec![PathBuf::from("**/*")]
+}
+
 fn default_path_exclusion() -> Vec<PathBuf> {
     vec![PathBuf::from("**/*.gz"), PathBuf::from("**/*.tmp")]
 }
@@ -995,11 +1037,26 @@ const fn default_delay_deletion_ms() -> Duration {
     Duration::from_millis(60_000)
 }
 
+const fn default_rotate_wait() -> Duration {
+    Duration::from_secs(u64::MAX / 2)
+}
+
+// This function constructs the patterns we include for file watching, created
+// from the defaults or user provided configuration.
+fn prepare_include_paths(config: &Config) -> crate::Result<Vec<glob::Pattern>> {
+    prepare_glob_patterns(&config.include_paths_glob_patterns, "Including")
+}
+
 // This function constructs the patterns we exclude from file watching, created
 // from the defaults or user provided configuration.
 fn prepare_exclude_paths(config: &Config) -> crate::Result<Vec<glob::Pattern>> {
-    let exclude_paths = config
-        .exclude_paths_glob_patterns
+    prepare_glob_patterns(&config.exclude_paths_glob_patterns, "Excluding")
+}
+
+// This function constructs the patterns for file watching, created
+// from the defaults or user provided configuration.
+fn prepare_glob_patterns(paths: &[PathBuf], op: &str) -> crate::Result<Vec<glob::Pattern>> {
+    let ret = paths
         .iter()
         .map(|pattern| {
             let pattern = pattern
@@ -1010,14 +1067,14 @@ fn prepare_exclude_paths(config: &Config) -> crate::Result<Vec<glob::Pattern>> {
         .collect::<crate::Result<Vec<_>>>()?;
 
     info!(
-        message = "Excluding matching files.",
-        exclude_paths = ?exclude_paths
+        message = format!("{op} matching files."),
+        ret = ?ret
             .iter()
             .map(glob::Pattern::as_str)
             .collect::<Vec<_>>()
     );
 
-    Ok(exclude_paths)
+    Ok(ret)
 }
 
 // This function constructs the effective field selector to use, based on
