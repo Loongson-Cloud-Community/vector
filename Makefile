@@ -74,6 +74,8 @@ export CI ?= false
 
 export RUST_VERSION ?= $(shell grep channel rust-toolchain.toml | cut -d '"' -f 2)
 
+export OPENSSL_NO_VENDOR=1
+
 FORMATTING_BEGIN_YELLOW = \033[0;33m
 FORMATTING_BEGIN_BLUE = \033[36m
 FORMATTING_END = \033[0m
@@ -192,12 +194,12 @@ environment-push: environment-prepare ## Publish a new version of the container 
 build: check-build-tools
 build: export CFLAGS += -g0 -O3
 build: ## Build the project in release mode (Supports `ENVIRONMENT=true`)
-	${MAYBE_ENVIRONMENT_EXEC} cargo build --release --no-default-features --features ${FEATURES}
+	${MAYBE_ENVIRONMENT_EXEC} cargo build --release --no-default-features --features ${FEATURES} --config "source.crates-io.replace-with='vendored-sources'" --config "source.vendored-sources.directory='./vendor'"
 	${MAYBE_ENVIRONMENT_COPY_ARTIFACTS}
 
 .PHONY: build-dev
 build-dev: ## Build the project in development mode (Supports `ENVIRONMENT=true`)
-	${MAYBE_ENVIRONMENT_EXEC} cargo build --no-default-features --features ${FEATURES}
+	${MAYBE_ENVIRONMENT_EXEC} cargo build --no-default-features --features ${FEATURES} --config "source.crates-io.replace-with='vendored-sources'" --config "source.vendored-sources.directory='./vendor'"
 
 .PHONY: build-x86_64-unknown-linux-gnu
 build-x86_64-unknown-linux-gnu: target/x86_64-unknown-linux-gnu/release/vector ## Build a release binary for the x86_64-unknown-linux-gnu triple.
@@ -207,12 +209,20 @@ build-x86_64-unknown-linux-gnu: target/x86_64-unknown-linux-gnu/release/vector #
 build-aarch64-unknown-linux-gnu: target/aarch64-unknown-linux-gnu/release/vector ## Build a release binary for the aarch64-unknown-linux-gnu triple.
 	@echo "Output to ${<}"
 
+.PHONY: build-loongarch64-unknown-linux-gnu
+build-loongarch64-unknown-linux-gnu: target/loongarch64-unknown-linux-gnu/release/vector ## Build a release binary for the loongarch64-unknown-linux-gnu triple.
+	@echo "Output to ${<}"
+
 .PHONY: build-x86_64-unknown-linux-musl
 build-x86_64-unknown-linux-musl: target/x86_64-unknown-linux-musl/release/vector ## Build a release binary for the x86_64-unknown-linux-musl triple.
 	@echo "Output to ${<}"
 
 .PHONY: build-aarch64-unknown-linux-musl
 build-aarch64-unknown-linux-musl: target/aarch64-unknown-linux-musl/release/vector ## Build a release binary for the aarch64-unknown-linux-musl triple.
+	@echo "Output to ${<}"
+
+.PHONY: build-loongarch64-unknown-linux-musl
+build-loongarch64-unknown-linux-musl: target/loongarch64-unknown-linux-musl/release/vector ## Build a release binary for the loongarch64-unknown-linux-musl triple.
 	@echo "Output to ${<}"
 
 .PHONY: build-armv7-unknown-linux-gnueabihf
@@ -531,8 +541,14 @@ package-x86_64-unknown-linux-musl-all: package-x86_64-unknown-linux-musl # Build
 .PHONY: package-aarch64-unknown-linux-musl-all
 package-aarch64-unknown-linux-musl-all: package-aarch64-unknown-linux-musl # Build all aarch64 MUSL packages
 
+.PHONY: package-loongarch64-unknown-linux-musl-all
+package-loongarch64-unknown-linux-musl-all: package-loongarch64-unknown-linux-musl # Build all aarch64 MUSL packages
+
 .PHONY: package-aarch64-unknown-linux-gnu-all
 package-aarch64-unknown-linux-gnu-all: package-aarch64-unknown-linux-gnu package-deb-aarch64 package-rpm-aarch64 # Build all aarch64 GNU packages
+
+.PHONY: package-loongarch64-unknown-linux-gnu-all
+package-loongarch64-unknown-linux-gnu-all: package-loongarch64-unknown-linux-gnu package-deb-loongarch64 package-rpm-loongarch64 # Build all loongarch64 GNU packages
 
 .PHONY: package-armv7-unknown-linux-gnueabihf-all
 package-armv7-unknown-linux-gnueabihf-all: package-armv7-unknown-linux-gnueabihf package-deb-armv7-gnu package-rpm-armv7hl-gnu  # Build all armv7-unknown-linux-gnueabihf MUSL packages
@@ -552,9 +568,16 @@ package-x86_64-unknown-linux-musl: target/artifacts/vector-${VERSION}-x86_64-unk
 package-aarch64-unknown-linux-musl: target/artifacts/vector-${VERSION}-aarch64-unknown-linux-musl.tar.gz ## Build an archive suitable for the `aarch64-unknown-linux-musl` triple.
 	@echo "Output to ${<}."
 
+.PHONY: package-loongarch64-unknown-linux-musl
+package-loongarch64-unknown-linux-musl: target/artifacts/vector-${VERSION}-loongarch64-unknown-linux-musl.tar.gz ## Build an archive suitable for the `loongarch64-unknown-linux-musl` triple.
+	@echo "Output to ${<}."
+
 .PHONY: package-aarch64-unknown-linux-gnu
 package-aarch64-unknown-linux-gnu: target/artifacts/vector-${VERSION}-aarch64-unknown-linux-gnu.tar.gz ## Build an archive suitable for the `aarch64-unknown-linux-gnu` triple.
 	@echo "Output to ${<}."
+
+.PHONY: package-loongarch64-unknown-linux-gnu
+package-loongarch64-unknown-linux-gnu: target/artifacts/vector-${VERSION}-loongarch64-unknown-linux-gnu.tar.gz ## Build an archive suitable for the `loongarch64-unknown-linux-gnu` triple.
 
 .PHONY: package-armv7-unknown-linux-gnueabihf
 package-armv7-unknown-linux-gnueabihf: target/artifacts/vector-${VERSION}-armv7-unknown-linux-gnueabihf.tar.gz ## Build an archive suitable for the `armv7-unknown-linux-gnueabihf` triple.
@@ -586,6 +609,10 @@ package-deb-x86_64-unknown-linux-musl: package-x86_64-unknown-linux-musl ## Buil
 package-deb-aarch64: package-aarch64-unknown-linux-gnu ## Build the aarch64 deb package
 	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=aarch64-unknown-linux-gnu -e VECTOR_VERSION $(ENVIRONMENT_UPSTREAM) cargo vdev package deb
 
+.PHONY: package-deb-loongarch64
+package-deb-loongarch64: package-loongarch64-unknown-linux-gnu ## Build the loongarch64 deb package
+	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=loongarch64-unknown-linux-gnu -e VECTOR_VERSION $(ENVIRONMENT_UPSTREAM) cargo vdev package deb
+
 .PHONY: package-deb-armv7-gnu
 package-deb-armv7-gnu: package-armv7-unknown-linux-gnueabihf ## Build the armv7-unknown-linux-gnueabihf deb package
 	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=armv7-unknown-linux-gnueabihf -e VECTOR_VERSION $(ENVIRONMENT_UPSTREAM) cargo vdev package deb
@@ -607,6 +634,10 @@ package-rpm-x86_64-unknown-linux-musl: package-x86_64-unknown-linux-musl ## Buil
 .PHONY: package-rpm-aarch64
 package-rpm-aarch64: package-aarch64-unknown-linux-gnu ## Build the aarch64 rpm package
 	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=aarch64-unknown-linux-gnu -e VECTOR_VERSION $(ENVIRONMENT_UPSTREAM) cargo vdev package rpm
+
+.PHONY: package-rpm-loongarch64
+package-rpm-loongarch64: package-loongarch64-unknown-linux-gnu ## Build the loongarch64 rpm package
+	$(CONTAINER_TOOL) run -v  $(PWD):/git/vectordotdev/vector/ -e TARGET=loongarch64-unknown-linux-gnu -e VECTOR_VERSION $(ENVIRONMENT_UPSTREAM) cargo vdev package rpm
 
 .PHONY: package-rpm-armv7hl-gnu
 package-rpm-armv7hl-gnu: package-armv7-unknown-linux-gnueabihf ## Build the armv7hl-unknown-linux-gnueabihf rpm package

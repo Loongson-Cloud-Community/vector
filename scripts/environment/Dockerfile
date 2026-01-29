@@ -1,4 +1,5 @@
-FROM docker.io/ubuntu:20.04
+#FROM docker.io/ubuntu:20.04
+FROM lcr.loongnix.cn/library/debian:unstable
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ='America/New York' \
     PATH=/root/.cargo/bin:/root/.local/bin/:$PATH \
